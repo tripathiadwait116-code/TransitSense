@@ -1,0 +1,233 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  PASSENGER
+}
+
+enum BusStatus {
+  ACTIVE
+  INACTIVE
+  MAINTENANCE
+  DELAYED
+}
+
+enum OccupancyStatus {
+  LOW
+  MODERATE
+  HIGH
+  FULL
+}
+
+enum TrafficCondition {
+  LOW
+  MODERATE
+  HEAVY
+}
+
+enum ReportCategory {
+  BUS_DELAY
+  OVERCROWDING
+  BUS_NOT_FOUND
+  INCORRECT_ETA
+  STOP_ISSUE
+  OTHER
+}
+
+enum ReportStatus {
+  PENDING
+  IN_REVIEW
+  RESOLVED
+}
+
+enum FavoriteTargetType {
+  BUS
+  ROUTE
+  STOP
+}
+
+model User {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  name         String
+  passwordHash String
+  role         Role       @default(PASSENGER)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  favorites    Favorite[]
+  reports      Report[]
+  auditLogs    AuditLog[]
+
+  @@index([email])
+  @@index([role])
+}
+
+model Bus {
+  id                 String          @id @default(cuid())
+  busNumber          String          @unique // e.g. "218", "25A", "10H"
+  registrationNumber String          @unique // e.g. "TS 09 Z 4812"
+  capacity           Int             @default(60)
+  status             BusStatus       @default(ACTIVE)
+  isSimulated        Boolean         @default(true)
+  routeId            String?
+  route              Route?          @relation(fields: [routeId], references: [id], onDelete: SetNull)
+  locations          BusLocation[]
+  occupancies        BusOccupancy[]
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  @@index([busNumber])
+  @@index([routeId])
+  @@index([status])
+}
+
+model Route {
+  id                   String          @id @default(cuid())
+  routeNumber          String          @unique // e.g. "218", "25A"
+  routeName            String          // e.g. "Koti to Patancheru"
+  startPoint           String
+  destination          String
+  totalDistanceKm      Float           @default(0)
+  estimatedDurationMin Int             @default(0)
+  isActive             Boolean         @default(true)
+  isDeleted            Boolean         @default(false)
+  buses                Bus[]
+  routeStops           RouteStop[]
+  trafficStatuses      TrafficStatus[]
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  @@index([routeNumber])
+  @@index([isActive])
+}
+
+model BusStop {
+  id         String      @id @default(cuid())
+  name       String
+  code       String      @unique // e.g. "HYD-KOTI-01"
+  latitude   Float
+  longitude  Float
+  landmark   String?
+  city       String      @default("Hyderabad")
+  isDeleted  Boolean     @default(false)
+  routeStops RouteStop[]
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  @@index([name])
+  @@index([code])
+  @@index([latitude, longitude])
+}
+
+model RouteStop {
+  id                          String   @id @default(cuid())
+  routeId                     String
+  stopId                      String
+  stopSequence                Int
+  distanceToNextKm            Float    @default(1.5)
+  estimatedTravelTimeToNextMin Int     @default(4)
+  route                       Route    @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  stop                        BusStop  @relation(fields: [stopId], references: [id], onDelete: Cascade)
+
+  @@unique([routeId, stopSequence])
+  @@index([routeId])
+  @@index([stopId])
+}
+
+model BusLocation {
+  id               String   @id @default(cuid())
+  busId            String
+  bus              Bus      @relation(fields: [busId], references: [id], onDelete: Cascade)
+  latitude         Float
+  longitude        Float
+  speed            Float    @default(0) // km/h
+  heading          Float    @default(0) // 0-360 degrees
+  nextStopId       String?
+  distanceToNextKm Float    @default(0)
+  etaToNextMin     Int      @default(0)
+  timestamp        DateTime @default(now())
+
+  @@index([busId])
+  @@index([timestamp])
+  @@index([busId, timestamp])
+}
+
+model BusOccupancy {
+  id                  String          @id @default(cuid())
+  busId               String
+  bus                 Bus             @relation(fields: [busId], references: [id], onDelete: Cascade)
+  totalCapacity       Int             @default(60)
+  occupiedSeats       Int             @default(0)
+  availableSeats      Int             @default(60)
+  occupancyPercentage Float           @default(0)
+  status              OccupancyStatus @default(LOW)
+  timestamp           DateTime        @default(now())
+
+  @@index([busId])
+  @@index([timestamp])
+}
+
+model TrafficStatus {
+  id           String           @id @default(cuid())
+  routeId      String
+  route        Route            @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  condition    TrafficCondition @default(LOW)
+  delayMinutes Int              @default(0)
+  description  String?
+  timestamp    DateTime         @default(now())
+
+  @@index([routeId])
+  @@index([timestamp])
+}
+
+model Favorite {
+  id         String             @id @default(cuid())
+  userId     String
+  user       User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  targetType FavoriteTargetType
+  targetId   String             // busId, routeId, or stopId
+  createdAt  DateTime           @default(now())
+
+  @@unique([userId, targetType, targetId])
+  @@index([userId])
+}
+
+model Report {
+  id           String         @id @default(cuid())
+  userId       String?
+  user         User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  category     ReportCategory
+  busNumber    String?
+  routeId      String?
+  description  String
+  status       ReportStatus   @default(PENDING)
+  contactEmail String?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@index([category])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    String
+  entity    String
+  entityId  String?
+  details   String?  // JSON or descriptive string
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+}
